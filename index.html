@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Battle Classic 3D — prototipo</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#8bb9c7;font-family:system-ui,Arial;color:#fff;touch-action:none}
+#game{display:block;width:100%;height:100%}#hud{position:fixed;inset:0;pointer-events:none}
+.pill{background:#101820bb;border:1px solid #ffffff33;border-radius:12px;padding:8px 11px;font-size:13px;backdrop-filter:blur(4px)}
+#top{position:absolute;top:10px;left:10px;right:10px;display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+#status{max-width:60vw}#crosshair{position:absolute;left:50%;top:47%;transform:translate(-50%,-50%);font-size:24px;color:#fff;text-shadow:0 1px 4px #000}
+#controls{position:absolute;bottom:16px;left:14px;right:14px;display:flex;justify-content:space-between;align-items:end}
+#stick{width:116px;height:116px;border:2px solid #ffffff88;border-radius:50%;background:#10203055;position:relative;pointer-events:auto;touch-action:none}
+#knob{width:46px;height:46px;border-radius:50%;background:#ffffffaa;position:absolute;left:33px;top:33px}
+#actions{display:flex;gap:10px;align-items:end;pointer-events:auto}
+.action{width:66px;height:66px;border-radius:50%;border:2px solid #ffffffbb;background:#14202dbb;color:#fff;font-weight:800;font-size:12px}
+#shoot{width:82px;height:82px;background:#d84b35dd}
+#help{position:absolute;left:50%;bottom:112px;transform:translateX(-50%);text-align:center;max-width:90vw;font-size:12px;color:#fff;text-shadow:0 1px 3px #000}
+@media(min-width:800px){#stick{display:none}#help{bottom:20px}#controls{bottom:20px}}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+ <div id="top">
+  <div class="pill"><b>ＢＡＴＴＬＥ ＣＬＡＳＳＩＣ '１８</b><br><span id="status">Conectando al servidor…</span></div>
+  <div class="pill">HP <b id="hp">100</b> · Jugadores <b id="players">1</b></div>
+ </div>
+ <div id="crosshair">+</div>
+ <div id="help">Mueve el joystick · toca DISPARAR · prototipo 3D</div>
+ <div id="controls">
+  <div id="stick"><div id="knob"></div></div>
+  <div id="actions"><button class="action" id="jump">SALTAR</button><button class="action" id="shoot">DISPARAR</button></div>
+ </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+(() => {
+const statusEl=document.getElementById('status');
+if(!window.THREE){statusEl.textContent='No cargó Three.js: revisa internet.';return;}
+const canvas=document.getElementById('game');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true, powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.5)); renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=false;
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x9ecbd5); scene.fog=new THREE.Fog(0x9ecbd5,35,100);
+const camera=new THREE.PerspectiveCamera(68,innerWidth/innerHeight,.1,150);
+scene.add(new THREE.HemisphereLight(0xffffff,0x627b47,2.1));
+const sun=new THREE.DirectionalLight(0xffefcf,2.0);sun.position.set(-12,22,8);scene.add(sun);
+const mat=(color,roughness=1)=>new THREE.MeshStandardMaterial({color,roughness});
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(120,120),mat(0x789b4b));ground.rotation.x=-Math.PI/2;ground.position.y=-.06;scene.add(ground);
+const grid=new THREE.GridHelper(120,60,0x536e37,0x6c8745);grid.position.y=-.04;scene.add(grid);
+// Low-poly houses and cover
+function box(x,y,z,sx,sy,sz,color){let m=new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),mat(color));m.position.set(x,y,z);scene.add(m);return m;}
+for(let i=0;i<12;i++){let x=(i%4)*12-18,z=Math.floor(i/4)*13-14;box(x,1.4,z,5,2.8,4,0xc9b58a);let roof=new THREE.Mesh(new THREE.ConeGeometry(3.8,1.8,4),mat(0x7d4934));roof.position.set(x,3.7,z);roof.rotation.y=Math.PI/4;scene.add(roof);box(x+3.5,.7,z+3,1.2,1.4,1.2,0x7c6848);}
+for(let i=0;i<36;i++){let x=Math.sin(i*12.3)*44,z=Math.cos(i*7.7)*44;let trunk=new THREE.Mesh(new THREE.CylinderGeometry(.16,.24,1.5,5),mat(0x65452c));trunk.position.set(x,.75,z);scene.add(trunk);let leaves=new THREE.Mesh(new THREE.ConeGeometry(1.25,3.2,5),mat(0x2e6d43));leaves.position.set(x,2.8,z);scene.add(leaves);}
+const players=new Map(); let myId=null, hp=100, yaw=0, pitch=0, moving={x:0,z:0}, lastShot=0;
+function makePlayer(id,color){let g=new THREE.Group();let body=new THREE.Mesh(new THREE.CapsuleGeometry(.42,.75,3,6),mat(color));body.position.y=1.0;g.add(body);let head=new THREE.Mesh(new THREE.SphereGeometry(.25,8,6),mat(0xe4b38c));head.position.y=1.7;g.add(head);let gun=new THREE.Mesh(new THREE.BoxGeometry(.16,.15,.85),mat(0x252b2d));gun.position.set(.42,1.25,-.45);g.add(gun);scene.add(g);return g;}
+let socket=null;
+try{socket=io();socket.on('connect',()=>{myId=socket.id;statusEl.textContent='Online · sala de prueba';});socket.on('disconnect',()=>statusEl.textContent='Desconectado · inicia server.js');socket.on('state',state=>{document.getElementById('players').textContent=Object.keys(state.players).length;for(const [id,p] of Object.entries(state.players)){if(!players.has(id))players.set(id,makePlayer(id,id===myId?0x2874b9:0xc44a38));let o=players.get(id);o.position.set(p.x,0,p.z);o.rotation.y=p.yaw||0;o.visible=true;}for(const [id,obj] of players){if(!state.players[id]){scene.remove(obj);players.delete(id);}}if(state.hp&&state.hp[myId]!=null){hp=state.hp[myId];document.getElementById('hp').textContent=hp;}});socket.on('notice',s=>statusEl.textContent=s);}catch(e){statusEl.textContent='Modo local · servidor no disponible';}
+const local={x:0,z:0,yaw:0};let jumpUntil=0;
+function sendInput(){if(socket&&socket.connected)socket.emit('input',{x:moving.x,z:moving.z,yaw});}
+function fire(){let now=Date.now();if(now-lastShot<280)return;lastShot=now;if(socket&&socket.connected)socket.emit('shoot',{yaw});}
+document.getElementById('shoot').addEventListener('pointerdown',e=>{e.preventDefault();fire();});
+document.getElementById('jump').addEventListener('pointerdown',e=>{e.preventDefault();jumpUntil=performance.now()+450;});
+const stick=document.getElementById('stick'),knob=document.getElementById('knob');let stickId=null,origin={x:0,y:0};
+function setStick(e){let dx=e.clientX-origin.x,dy=e.clientY-origin.y;let d=Math.hypot(dx,dy),m=Math.min(35,d);if(d){dx=dx/d*m;dy=dy/d*m;}knob.style.transform=`translate(${dx}px,${dy}px)`;moving.x=dx/35;moving.z=dy/35;sendInput();}
+stick.addEventListener('pointerdown',e=>{stickId=e.pointerId;origin={x:e.clientX,y:e.clientY};stick.setPointerCapture(stickId);setStick(e);});
+stick.addEventListener('pointermove',e=>{if(e.pointerId===stickId)setStick(e);});
+function endStick(){stickId=null;moving={x:0,z:0};knob.style.transform='';sendInput();}
+stick.addEventListener('pointerup',endStick);stick.addEventListener('pointercancel',endStick);
+let keys={};addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(e.key===' ')jumpUntil=performance.now()+450;if(e.key==='Enter')fire();});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+let prev=performance.now();
+function animate(now){requestAnimationFrame(animate);let dt=Math.min((now-prev)/1000,.05);prev=now;
+let kx=(keys.d?1:0)-(keys.a?1:0), kz=(keys.s?1:0)-(keys.w?1:0);
+if(kx||kz){moving.x=kx;moving.z=kz;sendInput();}
+if(socket&&socket.connected){socket.emit('input',{x:moving.x||kx,z:moving.z||kz,yaw});}
+const me=myId&&players.get(myId);if(me){camera.position.set(me.position.x+Math.sin(yaw)*5,3.2+((now<jumpUntil)?1.0:0),me.position.z+Math.cos(yaw)*5);camera.lookAt(me.position.x,1.2,me.position.z);camera.rotation.order='YXZ';camera.rotation.y=yaw;camera.rotation.x=-.12;}else{camera.position.set(0,7,12);camera.lookAt(0,0,0);}
+renderer.render(scene,camera);}
+requestAnimationFrame(animate);
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+})();
+</script>
+</body></html>
