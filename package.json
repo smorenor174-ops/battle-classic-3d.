@@ -1,0 +1,9 @@
+{
+  "name": "battle-classic-3d",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prototipo 3D battle royale inspirado en juegos móviles clásicos",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "express": "^4.21.2", "socket.io": "^4.8.1" }
+}
